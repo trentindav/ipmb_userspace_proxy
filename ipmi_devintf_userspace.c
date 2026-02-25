@@ -295,9 +295,6 @@ static bool ipmi_ioctl_get_recv_payloads(fuse_req_t req, void *arg,
 		iovcnt++;
 	}
 
-	fprintf(stderr,
-		"ipmi0 ioctl: retrying for recv payloads (addr_len=%zu, data_len=%zu, out_bufsz=%zu)\n",
-		*addr_len, *data_len, out_bufsz);
 	fuse_reply_ioctl_retry(req, &in_iov, 1, out_iov, iovcnt);
 	return true;
 }
@@ -328,34 +325,16 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 	(void)arg;
 	(void)fi;
 
-	ipmi_log_ioctl(cmd, in_bufsz, out_bufsz);
-
-	// if (ipmi_ioctl_retry_if_needed(req, in_buf, in_bufsz, out_bufsz)) {
-	// 	fprintf(stderr, "ipmi0 ioctl: retrying for buffers\n");
-	// 	return;
-	// }
-
-	// fprintf(stderr, "IPMICTL_GET_MY_ADDRESS_CMD=0x%x\n", IPMICTL_GET_MY_ADDRESS_CMD);
-	// fprintf(stderr, "IPMICTL_GET_MY_LUN_CMD=0x%x\n", IPMICTL_GET_MY_LUN_CMD);
-	// fprintf(stderr, "IPMICTL_SET_MY_ADDRESS_CMD=0x%x\n", IPMICTL_SET_MY_ADDRESS_CMD);
-	// fprintf(stderr, "IPMICTL_SET_MY_LUN_CMD=0x%x\n", IPMICTL_SET_MY_LUN_CMD);
-	// fprintf(stderr, "IPMICTL_SET_GETS_EVENTS_CMD=0x%x\n", IPMICTL_SET_GETS_EVENTS_CMD);
-	// fprintf(stderr, "IPMICTL_REGISTER_FOR_CMD=0x%x\n", IPMICTL_REGISTER_FOR_CMD);
-	// fprintf(stderr, "IPMICTL_RECEIVE_MSG=0x%x\n", IPMICTL_RECEIVE_MSG);
-	// fprintf(stderr, "typeof IPMICTL_SET_GETS_EVENTS_CMD=%x, typeof cmd=%x\n", IPMICTL_SET_GETS_EVENTS_CMD, cmd);
+	//pmi_log_ioctl(cmd, in_bufsz, out_bufsz);
 
 	if (cmd == IPMICTL_GET_MY_ADDRESS_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_GET_MY_ADDRESS_CMD\n");
         ipmi_reply_u8(req, ipmi_state.my_addr);
         return;
     } else if (cmd == IPMICTL_GET_MY_LUN_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_GET_MY_LUN_CMD\n");
         ipmi_reply_u8(req, ipmi_state.my_lun);
         return;
     } else if (cmd == IPMICTL_SET_MY_ADDRESS_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_SET_MY_ADDRESS_CMD\n");
         if (!in_buf) {
-            // fuse_reply_ioctl_retry(req, &iov, 1, NULL, 0);
         	fuse_reply_ioctl(req, 0, NULL, 0);
             return;
         }
@@ -365,10 +344,8 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
         fuse_reply_ioctl(req, 0, NULL, 0);
         return;
     } else if (cmd == IPMICTL_SET_MY_LUN_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_SET_MY_LUN_CMD\n");
         if (!in_buf) {
             struct iovec iov = { (void *)0, sizeof(unsigned char) };
-            // fuse_reply_ioctl_retry(req, &iov, 1, NULL, 0);
         	fuse_reply_ioctl(req, 0, NULL, 0);
             return;
         }
@@ -378,43 +355,22 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
         fuse_reply_ioctl(req, 0, NULL, 0);
         return;
     } else if (cmd == IPMICTL_SET_GETS_EVENTS_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_SET_GETS_EVENTS_CMD\n");
         if (!in_buf) {
             struct iovec iov = { (void *)0, sizeof(int) };
-            // fuse_reply_ioctl_retry(req, &iov, 1, NULL, 0);
         	fuse_reply_ioctl(req, 0, NULL, 0);
             return;
         }
         if (in_bufsz >= sizeof(int)) {
             ipmi_state.gets_events = (*(const int *)in_buf != 0);
-            fprintf(stderr, "ipmi0: gets_events set to %d\n", ipmi_state.gets_events);
         }
-        // Return success via ioctl (0 return value, not error)
         fuse_reply_ioctl(req, 0, NULL, 0);
         return;
-#ifdef IPMICTL_GET_DEV_NAME_CMD
-    } else if (cmd == IPMICTL_GET_DEV_NAME_CMD) {
-        fuse_reply_ioctl(req, 0, "ipmi-cuse", strlen("ipmi-cuse") + 1);
-        return;
-#endif
-#ifdef IPMICTL_GET_DEV_TYPE_CMD
-    } else if (cmd == IPMICTL_GET_DEV_TYPE_CMD) {
-        ipmi_reply_int(req, 0);
-        return;
-#endif
-#ifdef IPMICTL_GET_CHANNEL_INFO_CMD
-    } else if (cmd == IPMICTL_GET_CHANNEL_INFO_CMD) {
-        ipmi_reply_channel_info(req, in_buf, in_bufsz);
-        return;
-#endif
     } else if (cmd == IPMICTL_REGISTER_FOR_CMD ||
            cmd == IPMICTL_UNREGISTER_FOR_CMD ||
            cmd == IPMICTL_SET_MY_CHANNEL_ADDRESS_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: ELSE\n");
         fuse_reply_err(req, 0);
         return;
     }
-
 
 	/*
 	 * The following ioctls use nested pointers in their arguments
@@ -422,8 +378,6 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 	 * marshalling extra buffers from userspace and is not implemented here.
 	 */
 	if (cmd == IPMICTL_SEND_COMMAND) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_SEND_COMMAND\n");
-
 		const struct ipmi_req *req_in;
 		const uint8_t *p;
 		size_t req_size;
@@ -432,23 +386,23 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 		size_t ipmi_rsp_len;
 
 		if (ipmi_ioctl_get_req_buffers(req, arg, in_buf, in_bufsz, &req_size)) {
-			fprintf(stderr, "ipmi0 ioctl: retrying for req buffers (need %zu bytes)\n", req_size);
+			// fprintf(stderr, "ipmictl_send_command: get req buffers (need %zu bytes)\n", req_size);
             return;
 		}
 		req_in = (const struct ipmi_req *)in_buf;
 
 		if (ipmi_ioctl_get_req_payloads(req, arg, req_in, in_buf, in_bufsz)) {
-			fprintf(stderr, "ipmi0 ioctl: retrying for req payloads (addr_len=%d, data_len=%u)\n",
-				req_in->addr_len, req_in->msg.data_len);
+			// fprintf(stderr, "ipmictl_send_command: get req payloads (addr_len=%d, data_len=%u)\n",
+			// 	req_in->addr_len, req_in->msg.data_len);
 			return;
 		}
 
-		fprintf(stderr, "DAVIDE: received IPMI netFn=%u; cmd=%u\n", req_in->msg.netfn, req_in->msg.cmd);
+		fprintf(stderr, "Received IPMI request netFn=0x%02x cmd=0x%02x data_len=%u\n",
+			req_in->msg.netfn, req_in->msg.cmd, req_in->msg.data_len);
 
 		p = (const uint8_t *)in_buf + sizeof(*req_in);
 
 		{
-			const struct ipmi_ipmb_addr *ipmb_addr = NULL;
 			uint8_t rs_sa_7bit = 0x10;  // TODO configurable
 			uint8_t rs_sa = rs_sa_7bit << 1;  // TODO configurable
 			uint8_t rq_sa = (uint8_t)(ipmi_state.my_addr << 1);
@@ -469,10 +423,6 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			uint8_t tx_frame[IPMI_MAX_DATA_LEN + 8];
 			size_t tx_frame_len;
 
-			// print req_in msg
-			fprintf(stderr, "ipmi0 ioctl: IPMI request netFn=0x%02x cmd=0x%02x data_len=%u\n",
-				req_in->msg.netfn, req_in->msg.cmd, req_in->msg.data_len);
-
 			netfn_rs_lun = (uint8_t)((req_in->msg.netfn << 2) | rs_lun);
 			rq_seq_rq_lun = (uint8_t)((seq << 2) | rq_lun);
 			checksum1 = ipmb_checksum1(rs_sa, netfn_rs_lun);
@@ -488,8 +438,8 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			ipmb_msg[5 + msg_data_len] = checksum2;
 			ipmb_len = 6 + msg_data_len;
 
-			fprintf(stderr, "ipmi0 ioctl: built IPMB message (%zu bytes)\n", ipmb_len);
-			ipmi_hexdump("  IPMB", ipmb_msg, ipmb_len);
+			// fprintf(stderr, "Encapsulated in IPMB request (%zu bytes)\n", ipmb_len);
+			// ipmi_hexdump("  IPMB", ipmb_msg, ipmb_len);
 
 			i2c_raw_frame[0] = rs_sa;
 			memcpy(&i2c_raw_frame[1], ipmb_msg, ipmb_len);
@@ -499,7 +449,8 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			memcpy(&tx_frame[1], i2c_raw_frame, i2c_raw_len);
 			tx_frame_len = i2c_raw_len + 1;
 
-			ipmi_hexdump("  TX Frame", tx_frame, tx_frame_len);
+			// fprintf(stderr, "Encapsulated IPMB request (%zu bytes)\n", ipmb_len);
+			ipmi_hexdump("  IPMB Request", tx_frame, tx_frame_len);
 			{
 				int fd;
 				int fd_flags;
@@ -509,7 +460,7 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 
 				fd = open("/dev/ipmb-1", O_RDWR);
 				if (fd < 0) {
-					fprintf(stderr, "ipmi0 ioctl: open(/dev/ipmb-1) failed: %s\n",
+					fprintf(stderr, "open(/dev/ipmb-1) failed: %s\n",
 						strerror(errno));
 				} else {
 					/* Drain any stale data and realign before sending. */
@@ -529,17 +480,17 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 
 					written = write(fd, tx_frame, tx_frame_len);
 					if (written < 0) {
-						fprintf(stderr, "ipmi0 ioctl: write(/dev/ipmb-1) failed: %s\n",
+						fprintf(stderr, "write(/dev/ipmb-1) failed: %s\n",
 							strerror(errno));
 					} else {
-						fprintf(stderr, "ipmi0 ioctl: wrote %zd bytes to /dev/ipmb-1\n", written);
+						fprintf(stderr, "wrote %zd bytes to /dev/ipmb-1\n", written);
 						read_len = read(fd, resp_buf, sizeof(resp_buf));
 						if (read_len < 0) {
-							fprintf(stderr, "ipmi0 ioctl: read(/dev/ipmb-1) failed: %s\n",
+							fprintf(stderr, "read(/dev/ipmb-1) failed: %s\n",
 								strerror(errno));
 						} else {
-							fprintf(stderr, "ipmi0 ioctl: read %zd bytes from /dev/ipmb-1\n", read_len);
-							ipmi_hexdump("  IPMB Rsp", resp_buf, (size_t)read_len);
+							fprintf(stderr, "read %zd bytes from /dev/ipmb-1\n", read_len);
+							ipmi_hexdump("  IPMB Response", resp_buf, (size_t)read_len);
 							{
 								size_t resp_off = 0;
 								size_t resp_len = (size_t)read_len;
@@ -554,10 +505,6 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 									ipmi_rsp = resp_buf + resp_off + 6;
 									response = ipmi_rsp;
 									ipmi_rsp_len = resp_len - 6;
-
-									fprintf(stderr, "ipmi0 ioctl: IPMI response bytes (%zu)\n",
-										ipmi_rsp_len);
-									ipmi_hexdump("  IPMI Rsp", ipmi_rsp, ipmi_rsp_len);
 								}
 							}
 						}
@@ -565,10 +512,6 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 					close(fd);
 				}
 			}
-
-			if (!ipmb_addr)
-				fprintf(stderr, "ipmi0 ioctl: warning: missing IPMB addr, rs_sa=0x%02x rs_lun=%u\n",
-					rs_sa, rs_lun);
 		}
 
 		{
@@ -594,8 +537,10 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			ipmi_pending.recv_type = IPMI_RESPONSE_RECV_TYPE;
 			ipmi_pending.valid = true;
 
-			fprintf(stderr, "Queued fixed response with len=%u:\n", ipmi_pending.data_len);
-			ipmi_hexdump("  Response Data", ipmi_pending.data, ipmi_pending.data_len);
+			// fprintf(stderr, "Queued response with len=%u:\n", ipmi_pending.data_len);
+			ipmi_hexdump("  IPMI Response", ipmi_pending.data, ipmi_pending.data_len);
+			fprintf(stderr, "\n-----------------------------------------\n\n");
+
 		}
 
 		fuse_reply_ioctl(req, 0, NULL, 0);
@@ -618,16 +563,14 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 		uintptr_t data_ptr;
 		bool compat32 = false;
 
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_RECEIVE_MSG\n");
-
 		if (!ipmi_pending.valid) {
-			fprintf(stderr, "No pending message to receive\n");
+			// fprintf(stderr, "No pending message to receive\n");
 			fuse_reply_err(req, EAGAIN);
 			return;
 		}
 
 		if (ipmi_ioctl_get_recv_buffers(req, arg, in_buf, in_bufsz, &recv_size)) {
-			fprintf(stderr, "ipmi0 ioctl: retrying for recv buffers (need %zu bytes)\n", recv_size);
+			// fprintf(stderr, "ipmi0 ioctl: retrying for recv buffers (need %zu bytes)\n", recv_size);
 			return;
 		}
 
@@ -643,15 +586,15 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			size_t total;
 
 			fprintf(stderr,
-				"ipmi0 ioctl: compat32 recv_in addr_len=%u data_len=%u addr=0x%08x data=0x%08x in_bufsz=%zu out_bufsz=%zu\n",
+				// "ipmi0 ioctl: compat32 recv_in addr_len=%u data_len=%u addr=0x%08x data=0x%08x in_bufsz=%zu out_bufsz=%zu\n",
 				recv_in32->addr_len, recv_in32->msg.data_len,
 				recv_in32->addr, recv_in32->msg.data,
 				in_bufsz, out_bufsz);
 
 			if (ipmi_ioctl_get_recv_buffers_size(req, arg, in_buf, in_bufsz,
 					sizeof(struct ipmi_recv32))) {
-				fprintf(stderr, "ipmi0 ioctl: retrying for recv32 buffers (need %zu bytes)\n",
-					sizeof(struct ipmi_recv32));
+				// fprintf(stderr, "ipmi0 ioctl: retrying for recv32 buffers (need %zu bytes)\n",
+				// 	sizeof(struct ipmi_recv32));
 				return;
 			}
 
@@ -686,9 +629,9 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 					out_iovcnt++;
 				}
 
-				fprintf(stderr,
-					"ipmi0 ioctl: retrying for recv32 payloads (addr_len=%zu, data_len=%zu, out_bufsz=%zu)\n",
-					req_addr_len, req_data_len, out_bufsz);
+				// fprintf(stderr,
+				// 	"ipmi0 ioctl: retrying for recv32 payloads (addr_len=%zu, data_len=%zu, out_bufsz=%zu)\n",
+				// 	req_addr_len, req_data_len, out_bufsz);
 				fuse_reply_ioctl_retry(req, &in_iov, 1, out_iov, out_iovcnt);
 				return;
 			}
@@ -748,8 +691,8 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			recv_tmp.addr, recv_tmp.msg.data, out_bufsz,
 			&req_addr_len, &req_data_len))
 			return;
-		fprintf(stderr, "ipmi0 ioctl: recv requested addr_len=%zu data_len=%zu\n",
-			req_addr_len, req_data_len);
+		// fprintf(stderr, "ipmi0 ioctl: recv requested addr_len=%zu data_len=%zu\n",
+		// 	req_addr_len, req_data_len);
 		addr_copy = ipmi_pending.addr_len;
 		data_copy = ipmi_pending.data_len;
 
@@ -800,12 +743,6 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 				iovcnt++;
 			}
 
-			fprintf(stderr, "Replying to receive with %d iovecs (addr_len=%zu data_len=%zu)\n",
-				iovcnt, addr_copy, data_copy);
-			if (data_copy > 0) {
-				fprintf(stderr, "ipmi0 ioctl: response bytes:\n");
-				ipmi_hexdump("  Response Data", ipmi_pending.data, data_copy);
-			}
 			ipmi_pending.valid = false;
 			fuse_reply_ioctl_iov(req, 0, iov, iovcnt);
 		}
@@ -814,10 +751,10 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 
     if (cmd == IPMICTL_GET_TIMING_PARMS_CMD ||
         cmd == IPMICTL_SET_TIMING_PARMS_CMD) {
-		fprintf(stderr, "ipmi0 ioctl: IPMICTL_GET_TIMING_PARMS_CMD\n");
         fuse_reply_err(req, ENOSYS);
         return;
     }
+
 
 	fuse_reply_err(req, ENOTTY);
 }

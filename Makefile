@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -O2
+CFLAGS ?= -w -O2
 LDFLAGS ?=
 
 # Target only AArch64 (arm64)
