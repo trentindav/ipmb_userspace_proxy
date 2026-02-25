@@ -9,6 +9,8 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifndef IPMI_CHANNEL_INFO_DEFINED
 struct ipmi_channel_info {
@@ -58,7 +60,7 @@ struct ipmi_recv32 {
 };
 
 static struct ipmi_devintf_state ipmi_state = {
-	.my_addr = 0x20,
+	.my_addr = 0x30,
 	.my_lun = 0x0,
 	.gets_events = false,
 };
@@ -425,6 +427,9 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 		const struct ipmi_req *req_in;
 		const uint8_t *p;
 		size_t req_size;
+		const uint8_t *response;
+		const uint8_t *ipmi_rsp;
+		size_t ipmi_rsp_len;
 
 		if (ipmi_ioctl_get_req_buffers(req, arg, in_buf, in_bufsz, &req_size)) {
 			fprintf(stderr, "ipmi0 ioctl: retrying for req buffers (need %zu bytes)\n", req_size);
@@ -438,15 +443,19 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			return;
 		}
 
+		fprintf(stderr, "DAVIDE: received IPMI netFn=%u; cmd=%u\n", req_in->msg.netfn, req_in->msg.cmd);
+
 		p = (const uint8_t *)in_buf + sizeof(*req_in);
 
 		{
 			const struct ipmi_ipmb_addr *ipmb_addr = NULL;
-			uint8_t rs_sa = 0;
+			uint8_t rs_sa_7bit = 0x10;  // TODO configurable
+			uint8_t rs_sa = rs_sa_7bit << 1;  // TODO configurable
 			uint8_t rq_sa = (uint8_t)(ipmi_state.my_addr << 1);
-			uint8_t rs_lun = 0;
+			uint8_t rs_lun = 0; // TODI configuragle
 			uint8_t rq_lun = (uint8_t)(ipmi_state.my_lun & 0x3);
-			uint8_t seq = (uint8_t)(req_in->msgid & 0x3f);
+			// uint8_t seq = (uint8_t)(req_in->msgid & 0x3f);
+			uint8_t seq = (uint8_t)(0 & 0x3f);
 			uint8_t netfn_rs_lun;
 			uint8_t rq_seq_rq_lun;
 			uint8_t checksum1;
@@ -455,16 +464,14 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			size_t msg_data_len = req_in->msg.data_len;
 			uint8_t ipmb_msg[IPMI_MAX_DATA_LEN + 6];
 			size_t ipmb_len;
+			uint8_t i2c_raw_frame[IPMI_MAX_DATA_LEN + 7];
+			size_t i2c_raw_len;
+			uint8_t tx_frame[IPMI_MAX_DATA_LEN + 8];
+			size_t tx_frame_len;
 
-			if (req_in->addr_len >= sizeof(struct ipmi_ipmb_addr)) {
-				ipmb_addr = (const struct ipmi_ipmb_addr *)p;
-				if (ipmb_addr->addr_type == IPMI_IPMB_ADDR_TYPE) {
-					rs_sa = (uint8_t)(ipmb_addr->slave_addr << 1);
-					rs_lun = (uint8_t)(ipmb_addr->lun & 0x3);
-				} else {
-					ipmb_addr = NULL;
-				}
-			}
+			// print req_in msg
+			fprintf(stderr, "ipmi0 ioctl: IPMI request netFn=0x%02x cmd=0x%02x data_len=%u\n",
+				req_in->msg.netfn, req_in->msg.cmd, req_in->msg.data_len);
 
 			netfn_rs_lun = (uint8_t)((req_in->msg.netfn << 2) | rs_lun);
 			rq_seq_rq_lun = (uint8_t)((seq << 2) | rq_lun);
@@ -484,18 +491,93 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 			fprintf(stderr, "ipmi0 ioctl: built IPMB message (%zu bytes)\n", ipmb_len);
 			ipmi_hexdump("  IPMB", ipmb_msg, ipmb_len);
 
+			i2c_raw_frame[0] = rs_sa;
+			memcpy(&i2c_raw_frame[1], ipmb_msg, ipmb_len);
+			i2c_raw_len = ipmb_len + 1;
+
+			tx_frame[0] = (uint8_t)i2c_raw_len;
+			memcpy(&tx_frame[1], i2c_raw_frame, i2c_raw_len);
+			tx_frame_len = i2c_raw_len + 1;
+
+			ipmi_hexdump("  TX Frame", tx_frame, tx_frame_len);
+			{
+				int fd;
+				int fd_flags;
+				ssize_t written;
+				uint8_t resp_buf[IPMI_MAX_DATA_LEN + 7];
+				ssize_t read_len;
+
+				fd = open("/dev/ipmb-1", O_RDWR);
+				if (fd < 0) {
+					fprintf(stderr, "ipmi0 ioctl: open(/dev/ipmb-1) failed: %s\n",
+						strerror(errno));
+				} else {
+					/* Drain any stale data and realign before sending. */
+					fd_flags = fcntl(fd, F_GETFL, 0);
+					if (fd_flags >= 0) {
+						fcntl(fd, F_SETFL, fd_flags | O_NONBLOCK);
+						for (;;) {
+							read_len = read(fd, resp_buf, sizeof(resp_buf));
+							if (read_len <= 0) {
+								if (read_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+									break;
+								break;
+							}
+						}
+						fcntl(fd, F_SETFL, fd_flags);
+					}
+
+					written = write(fd, tx_frame, tx_frame_len);
+					if (written < 0) {
+						fprintf(stderr, "ipmi0 ioctl: write(/dev/ipmb-1) failed: %s\n",
+							strerror(errno));
+					} else {
+						fprintf(stderr, "ipmi0 ioctl: wrote %zd bytes to /dev/ipmb-1\n", written);
+						read_len = read(fd, resp_buf, sizeof(resp_buf));
+						if (read_len < 0) {
+							fprintf(stderr, "ipmi0 ioctl: read(/dev/ipmb-1) failed: %s\n",
+								strerror(errno));
+						} else {
+							fprintf(stderr, "ipmi0 ioctl: read %zd bytes from /dev/ipmb-1\n", read_len);
+							ipmi_hexdump("  IPMB Rsp", resp_buf, (size_t)read_len);
+							{
+								size_t resp_off = 0;
+								size_t resp_len = (size_t)read_len;
+
+								if (resp_len > 0 && resp_buf[0] == resp_len - 1) {
+									resp_off = 1;
+									resp_len -= 1;
+								}
+
+								if (resp_len >= 7) {
+									// 6 bytes: target_addr, netfn_rs_lun, checksum1, rq_sa, rq_seq, cmd
+									ipmi_rsp = resp_buf + resp_off + 6;
+									response = ipmi_rsp;
+									ipmi_rsp_len = resp_len - 6;
+
+									fprintf(stderr, "ipmi0 ioctl: IPMI response bytes (%zu)\n",
+										ipmi_rsp_len);
+									ipmi_hexdump("  IPMI Rsp", ipmi_rsp, ipmi_rsp_len);
+								}
+							}
+						}
+					}
+					close(fd);
+				}
+			}
+
 			if (!ipmb_addr)
 				fprintf(stderr, "ipmi0 ioctl: warning: missing IPMB addr, rs_sa=0x%02x rs_lun=%u\n",
 					rs_sa, rs_lun);
 		}
 
 		{
-			static const uint8_t response[] = {
-				0x00, 0x01, 0x81, 0x17, 0x10, 0x02, 0x9f, 0x19, 0x81,
-				0x00, 0x04, 0x00, 0x10, 0x05, 0x00, 0x00, 0xe2
-			};
+			// static const uint8_t response[] = {
+			// 	0x00, 0x01, 0x82, 0x17, 0x10, 0x02, 0x9f, 0x19, 0x81,
+			// 	0x00, 0x04, 0x00, 0x10, 0x05, 0x00, 0x00, 0xe2
+			// };
 			size_t addr_len = req_in->addr_len;
-			size_t data_len = sizeof(response);
+			size_t data_len = ipmi_rsp_len-1;
 
 			if (addr_len > IPMI_MAX_ADDR_SIZE)
 				addr_len = IPMI_MAX_ADDR_SIZE;
@@ -503,7 +585,7 @@ void ipmi_devintf_ioctl(fuse_req_t req, unsigned long cmd, void *arg,
 				data_len = IPMI_MAX_DATA_LEN;
 
 			memcpy(ipmi_pending.addr, p, addr_len);
-			memcpy(ipmi_pending.data, response, data_len);
+			memcpy(ipmi_pending.data, ipmi_rsp, data_len);
 			ipmi_pending.addr_len = (unsigned int)addr_len;
 			ipmi_pending.data_len = (unsigned short)data_len;
 			ipmi_pending.msgid = req_in->msgid;
